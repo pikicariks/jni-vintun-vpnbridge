@@ -9,92 +9,41 @@
 #include <iphlpapi.h>
 #include "wintun.h"
 
-static WINTUN_CREATE_ADAPTER_FUNC* WintunCreateAdapter;
-static WINTUN_CLOSE_ADAPTER_FUNC* WintunCloseAdapter;
-static WINTUN_OPEN_ADAPTER_FUNC* WintunOpenAdapter;
-static WINTUN_GET_ADAPTER_LUID_FUNC* WintunGetAdapterLUID;
-static WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC* WintunGetRunningDriverVersion;
-static WINTUN_DELETE_DRIVER_FUNC* WintunDeleteDriver;
-static WINTUN_SET_LOGGER_FUNC* WintunSetLogger;
-static WINTUN_START_SESSION_FUNC* WintunStartSession;
-static WINTUN_END_SESSION_FUNC* WintunEndSession;
-static WINTUN_GET_READ_WAIT_EVENT_FUNC* WintunGetReadWaitEvent;
-static WINTUN_RECEIVE_PACKET_FUNC* WintunReceivePacket;
-static WINTUN_RELEASE_RECEIVE_PACKET_FUNC* WintunReleaseReceivePacket;
-static WINTUN_ALLOCATE_SEND_PACKET_FUNC* WintunAllocateSendPacket;
-static WINTUN_SEND_PACKET_FUNC* WintunSendPacket;
-
 #ifndef WINTUN_API
 #define WINTUN_API __stdcall
 #endif
 
-typedef WINTUN_ADAPTER_HANDLE(WINTUN_API* WINTUN_CREATE_ADAPTER_FUNC)(
-    const WCHAR* Name,
-    const WCHAR* TunnelType,
-    const GUID* RequestedGUID
-    );
+typedef WINTUN_ADAPTER_HANDLE(WINTUN_API* WINTUN_CREATE_ADAPTER_PTR)(const WCHAR* Name, const WCHAR* TunnelType, const GUID* RequestedGUID);
+typedef void (WINTUN_API* WINTUN_DELETE_ADAPTER_PTR)(WINTUN_ADAPTER_HANDLE Adapter);
+typedef WINTUN_ADAPTER_HANDLE(WINTUN_API* WINTUN_OPEN_ADAPTER_PTR)(const WCHAR* Name);
+typedef void (WINTUN_API* WINTUN_CLOSE_ADAPTER_PTR)(WINTUN_ADAPTER_HANDLE Adapter);
+typedef DWORD(WINTUN_API* WINTUN_GET_ADAPTER_LUID_PTR)(WINTUN_ADAPTER_HANDLE Adapter, NET_LUID* Luid);
+typedef DWORD(WINTUN_API* WINTUN_GET_RUNNING_DRIVER_VERSION_PTR)(void);
+typedef void (WINTUN_API* WINTUN_DELETE_DRIVER_PTR)(const WCHAR* PoolName);
+typedef void (WINTUN_API* WINTUN_SET_LOGGER_PTR)(WINTUN_LOGGER_CALLBACK Logger);
+typedef WINTUN_SESSION_HANDLE(WINTUN_API* WINTUN_START_SESSION_PTR)(WINTUN_ADAPTER_HANDLE Adapter, DWORD RingCapacity);
+typedef void (WINTUN_API* WINTUN_END_SESSION_PTR)(WINTUN_SESSION_HANDLE Session);
+typedef HANDLE(WINTUN_API* WINTUN_GET_READ_WAIT_EVT_PTR)(WINTUN_SESSION_HANDLE Session);
+typedef BYTE* (WINTUN_API* WINTUN_RECEIVE_PACKET_PTR)(WINTUN_SESSION_HANDLE Session, DWORD* PacketSize);
+typedef void (WINTUN_API* WINTUN_RELEASE_RECEIVE_PACKET_PTR)(WINTUN_SESSION_HANDLE Session, const BYTE* Packet);
+typedef BYTE* (WINTUN_API* WINTUN_ALLOCATE_SEND_PACKET_PTR)(WINTUN_SESSION_HANDLE Session, DWORD PacketSize);
+typedef void (WINTUN_API* WINTUN_SEND_PACKET_PTR)(WINTUN_SESSION_HANDLE Session, const BYTE* Packet);
 
-typedef void (WINTUN_API* WINTUN_DELETE_ADAPTER_FUNC)(
-    WINTUN_ADAPTER_HANDLE Adapter
-    );
-
-typedef WINTUN_ADAPTER_HANDLE(WINTUN_API* WINTUN_OPEN_ADAPTER_FUNC)(
-    const WCHAR* Name
-    );
-
-typedef void (WINTUN_API* WINTUN_CLOSE_ADAPTER_FUNC)(
-    WINTUN_ADAPTER_HANDLE Adapter
-    );
-
-typedef ULONG64(WINTUN_API* WINTUN_GET_ADAPTER_LUID_FUNC)(
-    WINTUN_ADAPTER_HANDLE Adapter,
-    NET_LUID* Luid
-    );
-
-typedef DWORD(WINTUN_API* WINTUN_GET_RUNNING_DRIVER_VERSION_FUNC)(
-    void
-    );
-
-typedef void (WINTUN_API* WINTUN_DELETE_DRIVER_FUNC)(
-    const WCHAR* PoolName
-    );
-
-//typedef void (WINTUN_API* WINTUN_SET_LOGGER_FUNC)(
-//    WINTUN_LOGGER_TYPE* Logger
-//    );
-
-typedef WINTUN_SESSION_HANDLE(WINTUN_API* WINTUN_START_SESSION_FUNC)(
-    WINTUN_ADAPTER_HANDLE Adapter,
-    DWORD RingCapacity
-    );
-
-typedef void (WINTUN_API* WINTUN_END_SESSION_FUNC)(
-    WINTUN_SESSION_HANDLE Session
-    );
-
-typedef HANDLE(WINTUN_API* WINTUN_GET_READ_WAIT_EVT_FUNC)(
-    WINTUN_SESSION_HANDLE Session
-    );
-
-typedef BYTE* (WINTUN_API* WINTUN_RECEIVE_PACKET_FUNC)(
-    WINTUN_SESSION_HANDLE Session,
-    DWORD* PacketSize
-    );
-
-typedef void (WINTUN_API* WINTUN_RELEASE_RECEIVE_PACKET_FUNC)(
-    WINTUN_SESSION_HANDLE Session,
-    const BYTE* Packet
-    );
-
-typedef BYTE* (WINTUN_API* WINTUN_ALLOCATE_SEND_PACKET_FUNC)(
-    WINTUN_SESSION_HANDLE Session,
-    DWORD PacketSize
-    );
-
-typedef void (WINTUN_API* WINTUN_SEND_PACKET_FUNC)(
-    WINTUN_SESSION_HANDLE Session,
-    const BYTE* Packet
-    );
+static WINTUN_CREATE_ADAPTER_PTR WintunCreateAdapter = NULL;
+static WINTUN_DELETE_ADAPTER_PTR WintunDeleteAdapter = NULL;
+static WINTUN_OPEN_ADAPTER_PTR WintunOpenAdapter = NULL;
+static WINTUN_CLOSE_ADAPTER_PTR WintunCloseAdapter = NULL;
+static WINTUN_GET_ADAPTER_LUID_PTR WintunGetAdapterLUID = NULL;
+static WINTUN_GET_RUNNING_DRIVER_VERSION_PTR WintunGetRunningDriverVersion = NULL;
+static WINTUN_DELETE_DRIVER_PTR WintunDeleteDriver = NULL;
+static WINTUN_SET_LOGGER_PTR WintunSetLogger = NULL;
+static WINTUN_START_SESSION_PTR WintunStartSession = NULL;
+static WINTUN_END_SESSION_PTR WintunEndSession = NULL;
+static WINTUN_GET_READ_WAIT_EVT_PTR WintunGetReadWaitEvent = NULL;
+static WINTUN_RECEIVE_PACKET_PTR WintunReceivePacket = NULL;
+static WINTUN_RELEASE_RECEIVE_PACKET_PTR WintunReleaseReceivePacket = NULL;
+static WINTUN_ALLOCATE_SEND_PACKET_PTR WintunAllocateSendPacket = NULL;
+static WINTUN_SEND_PACKET_PTR WintunSendPacket = NULL;
 
 #define WINTUN_MAX_IP_PACKET_SIZE 0xFFFF
 
@@ -114,7 +63,7 @@ static BOOL LoadWintunFunctions(void) {
 #define X(Name) ((*(FARPROC *)&Name = GetProcAddress(Wintun, #Name)) == NULL)
     if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) ||
         X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver) || X(WintunSetLogger) || X(WintunStartSession) ||
-        X(WintunEndSession) || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) ||
+        X(WintunEndSession) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) ||
         X(WintunAllocateSendPacket) || X(WintunSendPacket))
 #undef X
     {
@@ -178,4 +127,72 @@ JNIEXPORT jlong JNICALL Java_vpn_vpnNativeBridge_openDevice(JNIEnv* env, jobject
 
     return openedHandle;
     
+}
+
+JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_readPacket(JNIEnv* env, jobject thiz, jlong handle, jobject obj) {
+    if (obj == NULL) {
+        printf("Buffer is NULL\n");
+        return -1;
+    } 
+
+    WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
+    void* bufferAddress = env->GetDirectBufferAddress(obj);
+    if (!bufferAddress) return -1;
+
+    jlong bufferCapacity = env->GetDirectBufferCapacity(obj);
+    DWORD packetSize = 0;
+    BYTE* packetData = WintunReceivePacket(sessionHandle, &packetSize);
+
+    if (!packetData) return 0;
+
+    if (packetSize > bufferCapacity) {
+        WintunReleaseReceivePacket(sessionHandle, packetData);
+        return -1;
+    }
+
+    memcpy(bufferAddress, packetData, packetSize);
+    WintunReleaseReceivePacket(sessionHandle, packetData);
+
+    return (jint)packetSize;
+    
+
+}
+
+JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_writePacket(JNIEnv* env, jobject obj, jlong handle, jobject buffer, jint size) {
+    if (!g_WintunLoaded || handle == 0) return -1;
+    if (size <= 0 || size > WINTUN_MAX_IP_PACKET_SIZE) return -1;
+
+    if (buffer == NULL) {
+        fprintf(stderr, "JNI Error: writePacket requires a Direct ByteBuffer.\n");
+        return -1;
+    }
+
+    WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
+    void* bufferAddress = env->GetDirectBufferAddress(buffer);
+    if (!bufferAddress) return -1;
+
+    BYTE* packetData = WintunAllocateSendPacket(sessionHandle, (DWORD)size);
+
+    if (!packetData) {
+        return 0;
+    }
+
+    memcpy(packetData, bufferAddress, (size_t)size);
+
+    WintunSendPacket(sessionHandle, packetData);
+
+    return size;
+}
+
+
+
+JNIEXPORT void JNICALL Java_vpn_VpnNativeBridge_closeDevice(JNIEnv* env, jobject thiz, jlong handle) {
+    if (handle == 0)
+        return;
+
+    WINTUN_SESSION_HANDLE session_handle = (WINTUN_SESSION_HANDLE)handle;
+
+    if (g_WintunLoaded) {
+        WintunEndSession(session_handle);
+    }
 }
