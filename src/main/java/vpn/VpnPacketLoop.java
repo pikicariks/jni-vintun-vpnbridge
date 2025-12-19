@@ -147,8 +147,7 @@ public class VpnPacketLoop {
             DatagramPacket outgoingPacket = new DatagramPacket(
                     encryptedData,
                     encryptedData.length,
-                    destAddr,
-                    protocol
+                    vpnServerAddress
             );
 
             socket.send(outgoingPacket);

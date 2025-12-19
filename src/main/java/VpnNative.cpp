@@ -57,8 +57,22 @@ static BOOL LoadWintunFunctions(void) {
 
     HMODULE Wintun =
         LoadLibraryExW(L"wintun.dll", NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!Wintun)
+
+    if (!Wintun) {
+        Wintun = LoadLibraryW(L".\\native\\wintun.dll");
+    }
+
+    if (!Wintun) {
+        Wintun = LoadLibraryW(L"native\\wintun.dll");
+    }
+    
+    if (!Wintun) {
+        DWORD error = GetLastError();
+        fprintf(stderr, "ERROR: Failed to load wintun.dll. Error code: %lu\n", error);
+        fprintf(stderr, "Tried: standard paths, .\\native\\wintun.dll, native\\wintun.dll\n");
+        fprintf(stderr, "Make sure wintun.dll is accessible from the application directory.\n");
         return false;
+    }
 
 #define X(Name) ((*(FARPROC *)&Name = GetProcAddress(Wintun, #Name)) == NULL)
     if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) ||
@@ -90,109 +104,123 @@ void UnloadWintunFunctions(void) {
     g_WintunLoaded = false;
 }
 
-JNIEXPORT jlong JNICALL Java_vpn_vpnNativeBridge_openDevice(JNIEnv* env, jobject thiz, jstring deviceName) {
-    if (!LoadWintunFunctions())
-        return 0;
+extern "C" {
 
-    const jchar* device = env->GetStringChars(deviceName, NULL);
-    if (device == NULL)
-        return 0;
+    JNIEXPORT jlong JNICALL Java_vpn_VpnNativeBridge_openDevice(JNIEnv* env, jobject thiz, jstring deviceName) {
+        if (!LoadWintunFunctions()) {
+            DWORD error = GetLastError();
+            fprintf(stderr, "ERROR: Failed to load wintun.dll. Error code: %lu\n", error);
+            fprintf(stderr, "Make sure wintun.dll is in the same directory as VpnNative.dll or in System32\n");
+            return 0;
+        }
 
-    const WCHAR* wdevice = reinterpret_cast<const wchar_t*>(device);
+        const jchar* device = env->GetStringChars(deviceName, NULL);
+        if (device == NULL)
+            return 0;
 
-    WINTUN_ADAPTER_HANDLE adapterHandle = WintunOpenAdapter(wdevice);
+        const WCHAR* wdevice = reinterpret_cast<const wchar_t*>(device);
 
-    if (adapterHandle == NULL) {
-        adapterHandle = WintunCreateAdapter(wdevice, L"tunnel", NULL);
+        WINTUN_ADAPTER_HANDLE adapterHandle = WintunOpenAdapter(wdevice);
 
         if (adapterHandle == NULL) {
+            adapterHandle = WintunCreateAdapter(wdevice, L"tunnel", NULL);
+
+            if (adapterHandle == NULL) {
+                DWORD error = GetLastError();
+                fprintf(stderr, "Wintun Error: Failed to create new adapter. Error code: %lu\n", error);
+                if (error == ERROR_ACCESS_DENIED || error == 5) {
+                    fprintf(stderr, "This operation requires Administrator privileges. Please run as Administrator.\n");
+                }
+                env->ReleaseStringChars(deviceName, device);
+                return 0;
+            }
+        }
+        WINTUN_SESSION_HANDLE session_handle = WintunStartSession(adapterHandle, 2097152 /* 2MB */);
+
+        if (session_handle == NULL)
+        {
             DWORD error = GetLastError();
-            fprintf(stderr, "Wintun Error: Failed to create new adapter. Last Error: %lu\n", error);
+            WintunCloseAdapter(adapterHandle);
+            fprintf(stderr, "Wintun Error: Failed to start session on adapter. Error code: %lu\n", error);
+            if (error == ERROR_ACCESS_DENIED || error == 5) {
+                fprintf(stderr, "This operation requires Administrator privileges. Please run as Administrator.\n");
+            }
             env->ReleaseStringChars(deviceName, device);
             return 0;
         }
-    }
-    WINTUN_SESSION_HANDLE session_handle = WintunStartSession(adapterHandle, 2097152 /* 2MB */);
 
-    if (session_handle == NULL)
-    {
-        WintunCloseAdapter(adapterHandle);
-        fprintf(stderr, "Wintun Error: Failed to start session on adapter. Last Error: %lu\n", GetLastError());
-        env->ReleaseStringChars(deviceName, device);
-        return 0;
+        jlong openedHandle = (jlong)session_handle;
+        env->ReleaseStringChars(deviceName, device); // JNI Cleanup
+
+        return openedHandle;
+
     }
 
-    jlong openedHandle = (jlong)session_handle;
-    env->ReleaseStringChars(deviceName, device); // JNI Cleanup
+    JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_readPacket(JNIEnv* env, jobject thiz, jlong handle, jobject obj) {
+        if (obj == NULL) {
+            printf("Buffer is NULL\n");
+            return -1;
+        }
 
-    return openedHandle;
-    
-}
+        WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
+        void* bufferAddress = env->GetDirectBufferAddress(obj);
+        if (!bufferAddress) return -1;
 
-JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_readPacket(JNIEnv* env, jobject thiz, jlong handle, jobject obj) {
-    if (obj == NULL) {
-        printf("Buffer is NULL\n");
-        return -1;
-    } 
+        jlong bufferCapacity = env->GetDirectBufferCapacity(obj);
+        DWORD packetSize = 0;
+        BYTE* packetData = WintunReceivePacket(sessionHandle, &packetSize);
 
-    WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
-    void* bufferAddress = env->GetDirectBufferAddress(obj);
-    if (!bufferAddress) return -1;
+        if (!packetData) return 0;
 
-    jlong bufferCapacity = env->GetDirectBufferCapacity(obj);
-    DWORD packetSize = 0;
-    BYTE* packetData = WintunReceivePacket(sessionHandle, &packetSize);
+        if (packetSize > bufferCapacity) {
+            WintunReleaseReceivePacket(sessionHandle, packetData);
+            return -1;
+        }
 
-    if (!packetData) return 0;
-
-    if (packetSize > bufferCapacity) {
+        memcpy(bufferAddress, packetData, packetSize);
         WintunReleaseReceivePacket(sessionHandle, packetData);
-        return -1;
+
+        return (jint)packetSize;
+
+
     }
 
-    memcpy(bufferAddress, packetData, packetSize);
-    WintunReleaseReceivePacket(sessionHandle, packetData);
+    JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_writePacket(JNIEnv* env, jobject obj, jlong handle, jobject buffer, jint size) {
+        if (!g_WintunLoaded || handle == 0) return -1;
+        if (size <= 0 || size > WINTUN_MAX_IP_PACKET_SIZE) return -1;
 
-    return (jint)packetSize;
-    
+        if (buffer == NULL) {
+            fprintf(stderr, "JNI Error: writePacket requires a Direct ByteBuffer.\n");
+            return -1;
+        }
 
-}
+        WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
+        void* bufferAddress = env->GetDirectBufferAddress(buffer);
+        if (!bufferAddress) return -1;
 
-JNIEXPORT jint JNICALL Java_vpn_VpnNativeBridge_writePacket(JNIEnv* env, jobject obj, jlong handle, jobject buffer, jint size) {
-    if (!g_WintunLoaded || handle == 0) return -1;
-    if (size <= 0 || size > WINTUN_MAX_IP_PACKET_SIZE) return -1;
+        BYTE* packetData = WintunAllocateSendPacket(sessionHandle, (DWORD)size);
 
-    if (buffer == NULL) {
-        fprintf(stderr, "JNI Error: writePacket requires a Direct ByteBuffer.\n");
-        return -1;
+        if (!packetData) {
+            return 0;
+        }
+
+        memcpy(packetData, bufferAddress, (size_t)size);
+
+        WintunSendPacket(sessionHandle, packetData);
+
+        return size;
     }
 
-    WINTUN_SESSION_HANDLE sessionHandle = (WINTUN_SESSION_HANDLE)handle;
-    void* bufferAddress = env->GetDirectBufferAddress(buffer);
-    if (!bufferAddress) return -1;
-
-    BYTE* packetData = WintunAllocateSendPacket(sessionHandle, (DWORD)size);
-
-    if (!packetData) {
-        return 0;
-    }
-
-    memcpy(packetData, bufferAddress, (size_t)size);
-
-    WintunSendPacket(sessionHandle, packetData);
-
-    return size;
-}
 
 
+    JNIEXPORT void JNICALL Java_vpn_VpnNativeBridge_closeDevice(JNIEnv* env, jobject thiz, jlong handle) {
+        if (handle == 0)
+            return;
 
-JNIEXPORT void JNICALL Java_vpn_VpnNativeBridge_closeDevice(JNIEnv* env, jobject thiz, jlong handle) {
-    if (handle == 0)
-        return;
+        WINTUN_SESSION_HANDLE session_handle = (WINTUN_SESSION_HANDLE)handle;
 
-    WINTUN_SESSION_HANDLE session_handle = (WINTUN_SESSION_HANDLE)handle;
-
-    if (g_WintunLoaded) {
-        WintunEndSession(session_handle);
+        if (g_WintunLoaded) {
+            WintunEndSession(session_handle);
+        }
     }
 }
