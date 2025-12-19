@@ -14,7 +14,7 @@ public class VpnNativeBridge {
 
     private native long openDevice(String deviceName);
     native int readPacket(long handle, ByteBuffer buffer);
-    private native int writePacket(long handle, ByteBuffer buffer, int length);
-    private native void closeDevice(long handle);
+    native int writePacket(long handle, ByteBuffer buffer, int length);
+    native void closeDevice(long handle);
 
 }
