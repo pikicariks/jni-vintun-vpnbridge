@@ -8,7 +8,7 @@ public class Vpn {
         VpnNativeBridge bridge = new VpnNativeBridge();
 
         System.out.println("Requesting Wintun adapter creation...");
-        long handle = bridge.openDevice("MyJavaVPN");
+        long handle = bridge.openDevice("JavaVPN");
 
         if (handle == 0) {
             System.err.println("Failed to open Wintun device. (Are you Admin?)");
@@ -17,9 +17,9 @@ public class Vpn {
 
         System.out.println("Wintun Session Handle acquired: " + handle);
 
-        configureInterface("MyJavaVPN", "10.0.0.2", "255.255.255.0", 1400);
+        configureInterface("JavaVPN", "10.0.0.2", "255.255.255.0", 1400);
 
-        String serverIp = "1.2.3.4";
+        String serverIp = "164.92.80.188";
         int serverPort = 51820;
 
         VpnPacketLoop vpnLoop = new VpnPacketLoop(bridge, handle, serverIp, serverPort);
@@ -32,9 +32,11 @@ public class Vpn {
                 scanner.nextLine();
             } catch (java.util.NoSuchElementException e) {
                 System.out.println("Input stream closed, shutting down...");
+                bridge.closeDevice(handle);
             }
         } catch (Exception e) {
             System.out.println("Error reading input, shutting down...");
+            bridge.closeDevice(handle);
         }
 
         System.out.println("Shutting down...");

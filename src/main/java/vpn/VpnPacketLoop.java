@@ -28,7 +28,7 @@ public class VpnPacketLoop {
         this.sessionHandle = handle;
         this.secureRandom = new SecureRandom();
 
-        byte[] keyBytes = "BAKA_POSLA_U_SIPKE_I_NIJE_SE_VRA".getBytes();
+        byte[] keyBytes = "BAKA_POSLA_U_SIPKE_I_NIJE_SE_VR".getBytes();
         byte[] fixedKey = new byte[32];
         System.arraycopy(keyBytes, 0, fixedKey, 0, Math.min(keyBytes.length, 32));
         this.secretKey = new SecretKeySpec(fixedKey, "AES");
@@ -163,7 +163,7 @@ public class VpnPacketLoop {
     }
 
     /**
-     * Encrypt data using AES-GCM.
+     * Encrypts data using AES-GCM.
      */
     private byte[] encrypt(byte[] data) throws Exception {
         byte[] iv = new byte[IV_SIZE];
